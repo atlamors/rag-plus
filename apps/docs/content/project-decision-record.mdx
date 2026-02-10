@@ -1,15 +1,371 @@
+---
+title: Project Decision Record — RAG Ops Lab
+description: Canonical v1 architecture and decisions for the local-first incident RAG platform.
+status: Ratified
+version: v1
+date: 2026-02-09
+owners:
+  - You
+---
+
 # Project Decision Record
 
-## Decision
+## Introduction and overview (written by me)
 
-Initialize `rag-plus` as a pnpm + Turborepo monorepo with separate Node/TypeScript and Python service boundaries.
+This project is a local-first research lab that I can run like a small production system in my home environment. The goal is to build real experience across RAG, multi-step agent orchestration, tool integration, and operational reliability. I want a system I can actually use, not a toy demo, and I want the architecture to map cleanly to what I would ship in a SaaS setting.
 
-## Rationale
+The core idea is simple. I will use LibreChat as the GUI so I can avoid building a custom interface in v1. I will expose my own OpenAI-compatible proxy endpoint that LibreChat can talk to like any other model. That proxy is where RAG, orchestration, and tool governance live. Under the hood the proxy can call either a “lab” model (Ollama on my server PC) or a “burst” model (LM Studio on my workstation) depending on what I select in the GUI. No environment swapping, no daily friction.
 
-- Keep platform concerns isolated in `apps/rag-api`.
-- Keep orchestration concerns isolated in `apps/orchestrator`.
-- Keep docs and KB corpora separated to avoid accidental ingestion of spec documents.
+I’m keeping the platform glue in Node and TypeScript because that’s my preferred distro web app architecture. Python will own orchestration because LangGraph and CrewAI are natural fits there, and the company I’m applying to explicitly mentions them. I’ll instrument the whole stack with real metrics and traces, and I’ll keep v1 safe and simple with read-only tools and strict auditing.
 
-## Status
+---
 
-Accepted for scaffold v1.
+## On-page index
+
+- [Goals](#goals)
+- [Principles](#principles)
+- [Deployment profile](#deployment-profile)
+- [Repository and DevOps](#repository-and-devops)
+- [Documentation](#documentation)
+- [Knowledge base](#knowledge-base)
+- [RAG core and retrieval](#rag-core-and-retrieval)
+- [Embeddings](#embeddings)
+- [Vector database](#vector-database)
+- [Ingestion](#ingestion)
+- [Retrieval policy](#retrieval-policy)
+- [Orchestration](#orchestration)
+- [Tool gateway](#tool-gateway)
+- [Run history and evaluation](#run-history-and-evaluation)
+- [Observability](#observability)
+- [LibreChat integration](#librechat-integration)
+- [Model registry](#model-registry)
+- [Security and networking](#security-and-networking)
+- [Out of scope](#out-of-scope)
+- [Open questions](#open-questions)
+
+---
+
+## Goals
+
+- Build a local-first incident RAG platform that I can run as “production locally.”
+- Learn and demonstrate real-world competency in:
+  - RAG ingestion and retrieval quality
+  - multi-step orchestration with LangGraph
+  - multi-agent framing with CrewAI (stub in v1)
+  - tool integration with strong safety boundaries
+  - evaluation and regression testing for non-deterministic systems
+  - operational concerns, monitoring, tracing, and run history
+- Avoid building a custom UI in v1 by using LibreChat.
+- Support model selection per request through the GUI, without environment switching.
+
+## Principles
+
+- Local-first by default, cloud optional later.
+- Platform glue in Node and TypeScript, orchestration in Python.
+- Single source of truth for core logic, no duplicated RAG logic across orchestrators.
+- Safe by default, read-only tools in v1.
+- Make everything observable and replayable.
+
+## Deployment profile
+
+- Default deployment runs on the server PC as the always-on lab environment.
+- Workstation PC can run a “burst” model endpoint on demand.
+- Both endpoints can exist concurrently, the GUI selection decides which model is used per request.
+
+### Local inference endpoints
+
+- Server model runtime: Ollama running natively on Windows.
+- Workstation model runtime: LM Studio running natively on Windows with an OpenAI-compatible server.
+
+### Containerization stance
+
+- Platform services run in Docker (via Docker Desktop + WSL2).
+- LLM inference is not containerized in v1.
+
+## Repository and DevOps
+
+### Monorepo
+
+- pnpm + Turborepo
+- Services and apps live in a single repo to keep versioning and startup simple.
+
+### Local installer
+
+- Primary entrypoint is `docker compose up -d`.
+- Optional helper scripts can exist for developer ergonomics but should not be required.
+
+### Core services
+
+- rag-api (Node/TS)
+- orchestrator (Python: LangGraph + CrewAI stub)
+- qdrant
+- postgres
+- prometheus
+- grafana
+- otel-collector
+- jaeger
+- librechat (and dependencies)
+
+## Documentation
+
+- Project documentation is written with Fumadocs.
+- Fumadocs content is compartmentalized and lives only in `apps/docs/content/**`.
+- Project docs are implementation and spec documentation for developers only.
+- Project docs are not ingested into the knowledge base.
+
+## Knowledge base
+
+- Knowledge base content lives only in `content/kb/**`.
+- v1 supports MDX only for knowledge base files.
+- Knowledge base is distinct from project documentation.
+
+### Folder conventions
+
+The folder structure is used to infer metadata like doc_type and service.
+
+Example shape:
+
+- `content/kb/runbooks/<service>/**` → runbooks
+- `content/kb/postmortems/<service>/**` → postmortems
+- `content/kb/alerts/<service>/**` → alert references
+- `content/kb/architecture/**` → architecture notes and service catalog
+
+Frontmatter can override inferred metadata when needed.
+
+## RAG core and retrieval
+
+- Retrieval and ingestion are owned by rag-api (Node/TS).
+- The orchestrator calls rag-api for retrieval and tools.
+- The RAG proxy endpoint is OpenAI-compatible so LibreChat can talk to it as if it were a model provider.
+
+## Embeddings
+
+- Embeddings exist to power semantic retrieval for RAG.
+- Embeddings are generated at:
+  - ingestion time for each chunk
+  - query time for the user’s question
+
+### v1 embedding provider
+
+- v1 embeddings are generated via Ollama on the server.
+- v1 embedding model is `nomic-embed-text`.
+- Embeddings are accessed via an OpenAI-compatible surface where available.
+- The system uses a defensive embedding client:
+  - supports single or batch input
+  - falls back to per-item calls if batching is not supported
+
+### Consistency rule
+
+- The same embedding model must be used for indexing and querying.
+- Changing the embedding model requires a full rebuild of the vector index.
+
+## Vector database
+
+- Qdrant is used as the vector database.
+- v1 collection name: `kb_chunks_v1`.
+
+### Stored point format
+
+Each chunk becomes one point:
+
+- id: stable hash based on source path, chunk index, and content hash
+- vector: embedding vector
+- payload:
+  - text
+  - source_path
+  - title
+  - doc_type
+  - service
+  - heading
+  - timestamps (frontmatter or file mtime)
+  - tags or labels where present
+
+Metadata fields are filterable to support targeted retrieval.
+
+## Ingestion
+
+- A dedicated ingestion CLI exists in rag-api.
+
+### Commands
+
+- `kb:ingest` incremental ingestion
+- `kb:rebuild` full rebuild and re-indexing
+
+### Scope
+
+- Ingestion scans only: `content/kb/**/*` (MDX in v1)
+- Project docs are excluded by design.
+
+### Responsibilities
+
+Ingestion is responsible for:
+
+- reading KB files
+- normalizing content
+- chunking by headings
+- generating embeddings
+- upserting points into Qdrant with consistent payload metadata
+- reporting results and failures
+
+## Retrieval policy
+
+- Retrieve top 20 chunks from Qdrant, then dedupe.
+- Provide the best 8–10 chunks to the generator as an evidence bundle.
+- Prefer metadata filters when context is available, especially service and doc_type.
+- Always include citations in the response.
+
+### Citations
+
+Citations include at minimum:
+
+- source_path
+- chunk_id
+- heading
+
+## Orchestration
+
+### Language split
+
+- Node/TS is the platform core and control plane.
+- Python is the orchestration service layer.
+
+### Framework usage
+
+- LangChain is used as the integration and composition toolkit where useful.
+- LangGraph is the primary workflow runtime and state machine for incident flows.
+- CrewAI exists in v1 as a stubbed scaffold to match the job requirements and enable future expansion.
+
+### Service separation
+
+- Orchestrator is a separate Python service and communicates with rag-api over HTTP.
+- rag-api remains the single owner of retrieval and tool governance.
+
+## Tool gateway
+
+### Safety posture
+
+- v1 tools are read-only.
+- Strict allowlist with typed schemas.
+- Timeout and concurrency limits are enforced.
+- Outputs are capped so we do not dump huge log payloads into the model.
+- Redaction is applied for obvious secrets.
+- Every tool call is audited.
+
+### Data sources
+
+- v1 supports fixture-backed tool responses to enable incident replay and evaluation.
+- Real tool integrations can be added later without changing the tool contract shape.
+
+## Run history and evaluation
+
+### Persistence
+
+- Postgres stores:
+  - run history and inputs
+  - model selection used
+  - retrieval chunk ids
+  - tool calls and redacted outputs
+  - orchestration step metadata
+  - evaluation results
+
+### Evaluation
+
+- Incident replay cases exist as fixtures.
+- The system supports regression tests focused on:
+  - evidence coverage
+  - safety compliance
+  - response structure consistency
+  - retrieval quality proxies over time
+
+## Observability
+
+This system is intended to be run locally like production, so observability is real.
+
+### Metrics
+
+- Prometheus scrapes `/metrics` from:
+  - rag-api
+  - orchestrator
+
+### Dashboards
+
+Grafana dashboards track:
+
+- latency and error rates
+- retrieval timings
+- tool call counts and failures
+- model usage breakdown (lab vs burst)
+- evaluation score trends
+
+### Tracing
+
+- OpenTelemetry instrumentation across services.
+- Jaeger used to visualize traces for:
+  - embedding calls
+  - retrieval spans
+  - LLM calls
+  - orchestration node execution
+  - tool calls
+
+## LibreChat integration
+
+### GUI choice
+
+- LibreChat is the v1 GUI.
+
+### Integration method
+
+- rag-api exposes an OpenAI-compatible proxy endpoint:
+  - `/v1/chat/completions`
+
+LibreChat connects to rag-api and sees model options that map to:
+
+- general inference models (direct passthrough)
+- incident RAG proxy models (RAG + orchestration + tools + then generation)
+
+### Models exposed in the GUI
+
+At minimum, v1 exposes four selectable models:
+
+- a general model served from Ollama (server)
+- a general model served from LM Studio (workstation)
+- an incidentrag model that uses the lab generator
+- an incidentrag model that uses the burst generator
+
+### Streaming
+
+- v1 can be non-streaming for simplicity.
+- streaming can be added later.
+
+## Model registry
+
+- v1 model configuration is stored in `models.json` checked into the repo.
+- The registry supports per-request selection without environment changes.
+- The registry can include capability flags if needed later.
+
+## Security and networking
+
+- Services are LAN-only where appropriate.
+- rag-api requires a shared token for access from LibreChat and internal callers.
+- Tools are read-only in v1 and fully audited.
+
+## Out of scope
+
+Explicitly out of scope for v1:
+
+- reranking
+- PDF ingestion
+- write or remediation tools
+- advanced autonomous planning beyond the defined workflow
+- full CrewAI implementation beyond a stub scaffold
+
+## Open questions
+
+These are deferred decisions, not blockers for v1:
+
+- whether to add hybrid retrieval (BM25 + embeddings) in v2
+- whether to add a reranker in v2
+- whether to support PDF ingestion in v2
+- whether to support streaming responses in the proxy endpoint
+- whether to enable LM Studio embeddings in addition to Ollama embeddings
+- whether to add write tools with approval gates
