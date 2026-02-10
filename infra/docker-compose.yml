@@ -1,0 +1,107 @@
+services:
+  rag-api:
+    build:
+      context: ../apps/rag-api
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      RAG_API_PORT: ${RAG_API_PORT:-3002}
+    ports:
+      - "${RAG_API_PORT:-3002}:3002"
+    depends_on:
+      - otel-collector
+
+  orchestrator:
+    build:
+      context: ../apps/orchestrator
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      ORCHESTRATOR_PORT: ${ORCHESTRATOR_PORT:-8000}
+    ports:
+      - "${ORCHESTRATOR_PORT:-8000}:8000"
+    depends_on:
+      - otel-collector
+
+  docs:
+    build:
+      context: ../apps/docs
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      PORT: ${DOCS_PORT:-3001}
+    ports:
+      - "${DOCS_PORT:-3001}:3001"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ragplus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragplus}
+      POSTGRES_DB: ${POSTGRES_DB:-ragplus}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - rag-api
+      - orchestrator
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel/otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+
+  # LibreChat v1 integration placeholder:
+  # librechat:
+  #   image: ghcr.io/danny-avila/librechat:latest
+  #   profiles: ["optional"]
+  #   ports:
+  #     - "3080:3080"
+
+volumes:
+  postgres_data:
+  qdrant_data:

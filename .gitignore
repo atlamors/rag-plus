@@ -1,0 +1,19 @@
+# Node
+node_modules/
+.pnpm-store/
+.turbo/
+dist/
+.next/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Env and local overrides
+.env
+.env.local
+
+# OS/editor
+.DS_Store
+Thumbs.db

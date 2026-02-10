@@ -1,0 +1,38 @@
+{
+  "embeddings": [
+    {
+      "id": "embed:lab",
+      "label": "Embeddings - Server (Ollama)",
+      "baseUrl": "http://host.docker.internal:11434/v1",
+      "model": "nomic-embed-text"
+    }
+  ],
+  "chat": [
+    {
+      "id": "lab:general",
+      "label": "General - Server (Ollama)",
+      "baseUrl": "http://host.docker.internal:11434/v1",
+      "model": "llama3.1:8b"
+    },
+    {
+      "id": "burst:general",
+      "label": "General - Workstation (LM Studio)",
+      "baseUrl": "http://WORKSTATION_IP:1234/v1",
+      "model": "MODEL_NAME_HERE"
+    }
+  ],
+  "proxy": [
+    {
+      "id": "incidentrag:lab",
+      "label": "IncidentRAG - Lab",
+      "generatorRef": "lab:general",
+      "embedderRef": "embed:lab"
+    },
+    {
+      "id": "incidentrag:burst",
+      "label": "IncidentRAG - Burst",
+      "generatorRef": "burst:general",
+      "embedderRef": "embed:lab"
+    }
+  ]
+}

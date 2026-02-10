@@ -1,0 +1,17 @@
+{
+  "name": "rag-plus",
+  "private": true,
+  "packageManager": "pnpm@10.18.3",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "format": "turbo format",
+    "up": "docker compose -f infra/docker-compose.yml up -d",
+    "down": "docker compose -f infra/docker-compose.yml down -v"
+  },
+  "devDependencies": {
+    "turbo": "^2.8.3",
+    "typescript": "^5.9.3"
+  }
+}

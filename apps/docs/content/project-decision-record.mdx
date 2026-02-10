@@ -1,0 +1,15 @@
+# Project Decision Record
+
+## Decision
+
+Initialize `rag-plus` as a pnpm + Turborepo monorepo with separate Node/TypeScript and Python service boundaries.
+
+## Rationale
+
+- Keep platform concerns isolated in `apps/rag-api`.
+- Keep orchestration concerns isolated in `apps/orchestrator`.
+- Keep docs and KB corpora separated to avoid accidental ingestion of spec documents.
+
+## Status
+
+Accepted for scaffold v1.
